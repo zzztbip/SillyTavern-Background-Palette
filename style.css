@@ -207,3 +207,42 @@
 #stbp-panel .stbp-share-buttons { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0; }
 #stbp-panel .stbp-share-buttons button { flex: 1 1 auto; font-size: 11px; padding: 7px; }
 #stbp-panel .stbp-sharing textarea { width: 100%; min-height: 86px; max-height: 220px; resize: vertical; overflow-wrap: anywhere; word-break: break-all; font-family: ui-monospace, Consolas, monospace; line-height: 1.5; }
+
+#stbp-menu-entry { cursor: pointer; }
+#stbp-menu-entry:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+#stbp-panel .stbp-popup-launch { width: 100%; margin: 0 0 2px; }
+
+/* The native ST dialog keeps the editor above the chat on desktop and mobile. */
+dialog.popup.stbp-dialog {
+    width: min(480px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
+    max-height: 90vh;
+    max-height: 90dvh;
+    min-height: 0;
+    padding: 12px;
+    overflow: hidden;
+}
+dialog.popup.stbp-dialog .popup-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-height: calc(90vh - 24px);
+    max-height: calc(90dvh - 24px);
+    overflow: hidden;
+}
+dialog.stbp-dialog .popup-content {
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+}
+dialog.stbp-dialog .popup-controls { flex: 0 0 auto; margin-top: 10px; }
+dialog.stbp-dialog .popup-button-ok {
+    background-color: color-mix(in srgb, var(--SmartThemeBodyColor, #eee9ef) 10%, transparent);
+    color: var(--SmartThemeBodyColor, #eee9ef);
+}
+#stbp-panel.stbp-in-popup { border: 0; border-radius: 0; margin: 0; }
+#stbp-panel.stbp-in-popup > summary { padding: 5px 3px 12px; cursor: default; }
+#stbp-panel.stbp-in-popup > summary::after { display: none; }
+#stbp-panel.stbp-in-popup > .stbp-body { padding: 3px 3px 12px; }
+#stbp-panel.stbp-in-popup .stbp-popup-launch { display: none; }

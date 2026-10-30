@@ -1,7 +1,9 @@
-/* Background Palette v1.2.1 — CSS gradients; no external services or AI calls. */
+/* Background Palette v1.3.0 — CSS gradients; no external services or AI calls. */
 const KEY = 'background_palette';
 const PANEL_ID = 'stbp-panel';
 const LAYER_ID = 'stbp-layer';
+const MENU_ID = 'stbp-menu-entry';
+const OPEN_COMMAND = 'bgpalette';
 const MAX_PRESETS = 24;
 const MAX_IMPORT_BYTES = 64 * 1024;
 const SHARE_TYPE = 'sillytavern-background-palette';
@@ -79,8 +81,148 @@ let syncDepth = 0;
 let subscriptions = [];
 let disposed = false;
 let activePoint = 0;
+let palettePopup = null;
+let slashRegistration = null;
 const context = () => globalThis.SillyTavern.getContext();
 const $ = selector => root.querySelector(selector);
+
+function restorePopup(session) {
+    if (session.restored) return;
+    session.restored = true;
+    const { panel, marker } = session;
+    syncDepth++;
+    try {
+        panel.classList.remove('stbp-in-popup');
+        panel.open = session.wasOpen;
+        if (!disposed && root === panel) {
+            if (marker.isConnected) marker.replaceWith(panel);
+            else {
+                const target = document.getElementById('extensions_settings2') || document.getElementById('extensions_settings');
+                if (target) target.append(panel);
+                else panel.remove();
+            }
+        } else {
+            marker.remove();
+            panel.remove();
+        }
+    } finally {
+        syncDepth--;
+    }
+    if (palettePopup === session) palettePopup = null;
+    if (!disposed && root === panel && panel.isConnected) {
+        update();
+        const focus = session.returnFocus;
+        if (focus?.isConnected && focus.getClientRects().length) focus.focus({ preventScroll: true });
+    }
+}
+
+// Reuse the same editor so native pickers, saved combinations and control IDs stay in sync.
+export async function openPalette() {
+    if (disposed || !root) return '';
+    if (palettePopup) {
+        palettePopup.popup?.dlg?.focus({ preventScroll: true });
+        return '';
+    }
+    const { Popup, POPUP_TYPE } = context();
+    if (typeof Popup !== 'function' || !POPUP_TYPE) {
+        globalThis.toastr?.info('이 버전에서는 확장 설정의 ‘배경 팔레트’를 이용해 주세요.');
+        return '';
+    }
+    const focused = document.activeElement;
+    const session = {
+        panel: root,
+        marker: document.createComment('Background Palette editor'),
+        wasOpen: root.open,
+        returnFocus: focused?.closest?.('#extensionsMenu') ? document.getElementById('extensionsMenuButton') : focused,
+        popup: null,
+        restored: false,
+    };
+    palettePopup = session;
+    session.panel.before(session.marker);
+    const content = document.createElement('div');
+    content.className = 'stbp-popup-content';
+    syncDepth++;
+    try {
+        session.panel.open = true;
+        session.panel.classList.add('stbp-in-popup');
+        content.append(session.panel);
+    } finally {
+        syncDepth--;
+    }
+    try {
+        const popup = new Popup(content, POPUP_TYPE.TEXT, '', {
+            okButton: '닫기',
+            cancelButton: false,
+            leftAlign: true,
+            allowVerticalScrolling: true,
+            onOpen: () => {
+                if (!disposed && root === session.panel && !session.restored) update();
+            },
+            onClose: () => restorePopup(session),
+        });
+        session.popup = popup;
+        popup.dlg.classList.add('stbp-dialog');
+        popup.dlg.setAttribute('aria-label', '배경 팔레트 설정');
+        await popup.show();
+    } catch (error) {
+        console.error('[Background Palette] Popup', error);
+        globalThis.toastr?.error('설정창을 열지 못했어요. 확장 설정의 ‘배경 팔레트’를 이용해 주세요.');
+    } finally {
+        restorePopup(session);
+    }
+    return '';
+}
+
+function mountMenu() {
+    const menu = document.getElementById('extensionsMenu');
+    if (!menu || document.getElementById(MENU_ID)) return;
+    const entry = document.createElement('div');
+    entry.id = MENU_ID;
+    entry.className = 'list-group-item flex-container flexGap5';
+    entry.setAttribute('role', 'button');
+    entry.setAttribute('aria-haspopup', 'dialog');
+    entry.tabIndex = 0;
+    const icon = document.createElement('i');
+    icon.className = 'fa-solid fa-palette';
+    icon.setAttribute('aria-hidden', 'true');
+    const label = document.createElement('span');
+    label.textContent = '배경 팔레트';
+    entry.append(icon, label);
+    // Let the normal wand-menu click handler close the menu after opening the editor.
+    entry.addEventListener('click', () => { void openPalette(); });
+    entry.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        entry.click();
+    });
+    menu.append(entry);
+}
+
+function registerShortcut() {
+    if (slashRegistration) return;
+    const { SlashCommandParser, SlashCommand } = context();
+    if (!SlashCommandParser?.addCommandObject || !SlashCommand?.fromProps) return;
+    if (SlashCommandParser.commands?.[OPEN_COMMAND]) {
+        console.warn('[Background Palette] /bgpalette is already registered.');
+        return;
+    }
+    const command = SlashCommand.fromProps({
+        name: OPEN_COMMAND,
+        callback: openPalette,
+        helpString: '배경 팔레트 설정창을 엽니다. 빠른답장 버튼의 실행 내용으로 /bgpalette를 사용할 수 있어요.',
+    });
+    SlashCommandParser.addCommandObject(command);
+    slashRegistration = { parser: SlashCommandParser, command };
+}
+
+function unregisterShortcut() {
+    if (!slashRegistration) return;
+    const { parser, command } = slashRegistration;
+    for (const name of [command.name, ...(command.aliases || [])]) {
+        if (parser.commands?.[name] === command) delete parser.commands[name];
+    }
+    slashRegistration = null;
+}
 
 function clamp(value, min, max, fallback) {
     const num = Number(value);
@@ -320,6 +462,7 @@ function mount() {
             <label class="stbp-toggle" for="stbp-enabled"><span>색상 배경 사용</span>
                 <input id="stbp-enabled" type="checkbox" role="switch"></label>
             <p id="stbp-enabled-note" class="stbp-note"></p>
+            <button id="stbp-open-popup" type="button" class="menu_button stbp-popup-launch">별도 설정창으로 열기</button>
             <div class="stbp-quick-row">
                 <label for="stbp-quick">내 조합 바로 적용</label>
                 <select id="stbp-quick" class="text_pole" aria-label="내 조합 바로 적용"></select>
@@ -413,7 +556,7 @@ function mount() {
             </details>
             <p id="stbp-notice" role="status" aria-live="polite"></p>
             <button id="stbp-restore" type="button" class="menu_button stbp-restore">기존 이미지 배경으로 돌아가기</button>
-            <p class="stbp-footnote">Background Palette 1.2.1 · 모든 채팅에 공통 적용</p>
+            <p class="stbp-footnote">Background Palette 1.3 · 모든 채팅에 공통 적용</p>
         </div>`;
     target.append(root);
     Object.entries(CENTERS).forEach(([key, label]) => $('#stbp-center').add(new Option(label, key)));
@@ -434,6 +577,10 @@ function mount() {
 }
 
 function bind() {
+    $('#stbp-open-popup').addEventListener('click', () => { void openPalette(); });
+    root.querySelector(':scope > summary').addEventListener('click', e => {
+        if (root.classList.contains('stbp-in-popup')) e.preventDefault();
+    });
     $('#stbp-quick').addEventListener('change', e => {
         const selected = e.target.value;
         const preset = selected === '' ? null : settings.presets[Number(selected)];
@@ -474,6 +621,14 @@ function bind() {
             settings.colors[i] = value;
             change({}, { pickers: false });
         });
+        const picker = $(`#stbp-picker-${i}`);
+        picker.addEventListener('click', e => {
+            if (!root.classList.contains('stbp-in-popup')) return;
+            const isPickerButton = e.composedPath().some(node =>
+                node instanceof HTMLButtonElement && node.getRootNode() === picker.shadowRoot);
+            // Make room for the native picker's flyout inside the scrolling dialog.
+            if (isPickerButton) picker.scrollIntoView({ block: 'center', inline: 'nearest' });
+        }, true);
     }
     $('#stbp-three').addEventListener('change', e => change({ threeColors: e.target.checked }));
     $('#stbp-reverse').addEventListener('click', () => {
@@ -773,9 +928,9 @@ function init() {
     if (document.getElementById(PANEL_ID)) return;
     disposed = false;
     try {
-        load(); mount(); bind(); renderSaved(); update();
+        load(); mount(); bind(); renderSaved(); update(); mountMenu(); registerShortcut();
         const { eventTypes } = context();
-        subscribe(eventTypes?.APP_READY, renderBackground);
+        subscribe(eventTypes?.APP_READY, () => { mountMenu(); registerShortcut(); renderBackground(); });
         subscribe(eventTypes?.CHAT_CHANGED, renderBackground);
         subscribe(eventTypes?.SETTINGS_LOADED_AFTER, () => { load(); renderSaved(); update(); });
         if (!customElements.get('toolcool-color-picker')) {
@@ -793,6 +948,17 @@ function init() {
 
 export function onDisable() {
     disposed = true;
+    const session = palettePopup;
+    if (session) {
+        restorePopup(session);
+        if (session.popup?.dlg?.open && !session.popup.dlg.hasAttribute('closing')) {
+            void session.popup.complete(context().POPUP_RESULT?.CANCELLED ?? null).catch(error => {
+                console.error('[Background Palette] Closing popup', error);
+            });
+        }
+    }
+    document.getElementById(MENU_ID)?.remove();
+    unregisterShortcut();
     document.getElementById(LAYER_ID)?.remove();
     document.getElementById(PANEL_ID)?.remove();
     const source = context().eventSource;
